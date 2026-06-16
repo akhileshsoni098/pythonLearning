@@ -1,0 +1,42 @@
+Project: auth-project — FastAPI User Authentication API
+======================================================
+
+Step-by-step setup:
+
+1. Created project directory and initialized Python virtual environment (venv)
+2. Installed dependencies: FastAPI, Uvicorn, psycopg2-binary, bcrypt, python-dotenv, Pydantic
+3. Created .env file with PostgreSQL database credentials
+4. Built database layer:
+   - app/db/database.py — connects to PostgreSQL, creates database & tables on startup
+   - app/db/db_query.py — helper for executing raw SQL queries
+   - app/db/schemas/01_users.sql — users table (id, email, password_hash, role, is_active, created_at)
+   - app/db/schemas/02_user_profiles.sql — user_profiles table (id, user_id FK, name, gender, phone, timestamps)
+5. Built password utility:
+   - app/utils/hash.py — bcrypt password hashing & verification
+6. Defined Pydantic models:
+   - app/models/user_auth_model.py — RegisterModel, LoginModel for request validation
+7. Built API routes:
+   - app/routes/auth_routes.py — POST /auth/register (hash password, insert user)
+   - app/routes/user_routes.py — GET/POST placeholder endpoints for users & items
+8. Set up FastAPI entry point:
+   - app/main.py — creates app, runs startup tasks (create DB + tables), registers routers, adds request logging middleware
+9. Added .gitignore for .env and venv/
+10. Wrote README.md documenting the planned full architecture (JWT, SQLAlchemy, etc.)
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+Project setup with virtual environment
+Installed required dependencies (FastAPI, PostgreSQL, etc.)
+Configured .env for database credentials
+Implemented database connection & auto table creation
+Created users and user_profiles schemas
+Built query execution helper
+Added password hashing utility (bcrypt)
+Defined Pydantic models for auth (Register/Login)
+Developed user registration API
+Set up basic routes and FastAPI app with middleware
+Added .gitignore and initial README
+
+Next: Implementing JWT authentication and protected routes.1

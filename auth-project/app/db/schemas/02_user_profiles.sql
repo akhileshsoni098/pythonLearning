@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS user_profiles (
+    id SERIAL PRIMARY KEY,
+    user_id INT UNIQUE NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    gender VARCHAR(10) CHECK (gender IN ('male', 'female', 'other')) NOT NULL,
+    phone VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
