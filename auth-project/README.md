@@ -1,6 +1,6 @@
-# Python Auth API - Complete Authentication System
+# Auth API - Python FastAPI Authentication System
 
-Ek simple authentication API jo Register, Login aur Profile features provide karta hai JWT token ke saath.
+FastAPI-based authentication system with JWT tokens, user registration, login, and profile management using PostgreSQL.
 
 ---
 
@@ -8,467 +8,249 @@ Ek simple authentication API jo Register, Login aur Profile features provide kar
 
 ```
 auth-project/
-│
-├── app/                          # Main application package
-│   ├── __init__.py               # Package init (empty, tells Python it's a package)
-│   ├── database.py               # Database connection, session, auto-create DB
-│   ├── models.py                 # SQLAlchemy table models (User)
-│   ├── schemas.py                # Pydantic models (request/response validation)
-│   ├── auth.py                   # Password hashing, JWT token, Auth middleware
-│   └── main.py                   # FastAPI app, routes (endpoints), server start
-│
+├── .env                          # Environment variables (DB creds, JWT secret)
 ├── requirements.txt              # Python dependencies
-├── README.md                     # Yeh file
-└── venv/                         # Virtual environment (Python packages yahan install hote hain)
+├── app/
+│   ├── main.py                   # FastAPI entry point, middleware, router setup
+│   ├── db/
+│   │   ├── database.py           # PostgreSQL connection & table creation
+│   │   ├── db_query.py           # Raw SQL query helper (supports dict cursor)
+│   │   └── schemas/
+│   │       ├── 01_users.sql      # users table DDL
+│   │       └── 02_user_profiles.sql  # user_profiles table DDL
+│   ├── middleware/
+│   │   └── auth_deps.py          # Auth dependency (Bearer token → verify → payload)
+│   ├── models/
+│   │   ├── user_auth_model.py    # Pydantic models (RegisterModel, LoginModel)
+│   │   └── user_profile_model.py # Pydantic model (profileModel)
+│   ├── routes/
+│   │   ├── auth_routes.py        # POST /auth/register, POST /auth/login
+│   │   └── user_profile_routes.py # GET/POST /api/profile, /api/items, /api/user/{id}
+│   └── utils/
+│       ├── hash.py               # bcrypt password hashing
+│       └── jwt.py                # JWT create & verify
+└── README.md
 ```
 
 ---
 
-## File-by-File Explanation
-
-### 1. `database.py` - Database Connection
-
-**Kaam:** PostgreSQL se connect karna, database auto-create karna, aur har request ke liye session provide karna.
+## Environment Variables (.env)
 
 ```
-database.py
-│
-├── psycopg2 ───────────────────── Direct PostgreSQL connection (DB create karne ke liye)
-│   └── ISOLATION_LEVEL_AUTOCOMMIT ─── CREATE DATABASE command ke liye zaroori
-│
-├── sqlalchemy ─────────────────── ORM framework
-│   ├── create_engine() ─────────── Connection pool banata hai
-│   ├── sessionmaker() ──────────── Har request ke liye session factory
-│   └── declarative_base() ──────── Table models ke liye parent class
-│
-└── Functions:
-    ├── ensure_database_exists() ── DB create kare (agar nahi hai)
-    └── get_db() ────────────────── FastAPI dependency - har request mein naya session
-```
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=python_db_connection
+DB_USER=postgres
+DB_PASSWORD=your_password
 
-### 2. `models.py` - Database Table Model
-
-**Kaam:** `users` table ka structure define karta hai.
-
-```
-models.py
-│
-├── from sqlalchemy import Column, Integer, String, Boolean, DateTime
-│   └── Column types jo database table mein columns banayenge
-│
-├── from datetime import datetime
-│   └── datetime.utcnow() - created_at field ka default value
-│
-├── from app.database import Base
-│   └── Parent class - isko extend karo to table banta hai
-│
-└── class User(Base):
-    ├── __tablename__ = "users" ─── Table ka naam
-    ├── id = Column(Integer, ...) ─── Primary key, auto-increment
-    ├── username = Column(String(50), ...) ─── Unique username
-    ├── email = Column(String(100), ...) ─── Unique email
-    ├── hashed_password = Column(String(255), ...) ─── bcrypt hash
-    ├── full_name = Column(String(100), ...) ─── Optional
-    ├── is_active = Column(Boolean, ...) ─── Default True
-    └── created_at = Column(DateTime, ...) ─── Auto set
-```
-
-### 3. `schemas.py` - Request/Response Validation
-
-**Kaam:** Client se data lene aur bhejne ke format define karna. Pydantic auto-validate karta hai.
-
-```
-schemas.py
-│
-├── from pydantic import BaseModel, field_validator
-│   ├── BaseModel ───── Parent class for all schemas
-│   └── field_validator ── Field-level validation decorator
-│
-├── from datetime import datetime ── Type hint ke liye
-│
-├── import re ── Regular expressions (pattern matching)
-│
-├── Validation Helpers:
-│   ├── validate_username() ──── 3-30 chars, letters/digits/_
-│   ├── validate_email() ─────── Format check + lowercase
-│   └── validate_password_strength() ── 8+ chars, upper, lower, digit, special
-│
-├── Request Schemas (input):
-│   ├── class UserRegister ──── POST /register body
-│   │   ├── username, email, password, confirm_password, full_name
-│   │   └── field_validators for username, email, password
-│   │
-│   └── class UserLogin ─────── POST /login body
-│       └── username, password
-│
-└── Response Schemas (output):
-    ├── class UserResponse ──── User data (bina password!)
-    │   └── model_config = {"from_attributes": True}
-    │
-    └── class TokenResponse ─── Token + User data
-        └── access_token, token_type, user
-```
-
-### 4. `auth.py` - Authentication Logic
-
-**Kaam:** Password hashing, JWT token creation/verification, aur auth middleware.
-
-```
-auth.py
-│
-├── from fastapi import Depends, HTTPException, status
-│   ├── Depends ──────── Dependency injection
-│   ├── HTTPException ── Error responses
-│   └── status ───────── HTTP status codes
-│
-├── from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-│   ├── HTTPBearer ─────────── Auto-extract Authorization header
-│   └── HTTPAuthorizationCredentials ── Type hint
-│
-├── from jose import JWTError, jwt
-│   ├── jwt.encode() ──── Token banaye
-│   ├── jwt.decode() ──── Token verify kare
-│   └── JWTError ──────── Invalid token exception
-│
-├── from passlib.context import CryptContext
-│   ├── .hash(password) ──── Hash generate
-│   └── .verify(plain, hash) ── Compare
-│
-├── from datetime import datetime, timedelta
-│   └── Token expiry calculate karne ke liye
-│
-├── from sqlalchemy.orm import Session ── Type hint
-├── from app.database import get_db ──── DB session
-├── from app.models import User ──────── User table model
-│
-├── Password Functions:
-│   ├── hash_password(password) ── bcrypt hash banaye
-│   └── verify_password(plain, hash) ── Match check kare
-│
-├── JWT Functions:
-│   ├── create_access_token(data) ── JWT token generate kare
-│   │   └── data = {"sub": username} + expiry time
-│   │
-│   └── verify_token(token) ── Decode + verify kare
-│       └── Return {"username": "..."} ya 401 error
-│
-└── Auth Middleware:
-    └── get_current_user() ── Protected routes ka guard
-        ├── Takes: token (from HTTPBearer), db (from get_db)
-        ├── Steps: verify_token -> get username -> query DB -> return user
-        └── Error: 401 agar token invalid, 404 agar user nahi mila
-```
-
-### 5. `main.py` - FastAPI App & Routes
-
-**Kaam:** Server start karna, saare API endpoints define karna.
-
-```
-main.py
-│
-├── Imports:
-│   ├── FastAPI, Depends, HTTPException, status ─── FastAPI core
-│   ├── CORSMiddleware ──────────────────────── CORS fix
-│   ├── Session ─────────────────────────────── Type hint
-│   ├── datetime ────────────────────────────── Timestamp
-│   ├── From app.database ───────────────────── DB functions
-│   ├── From app.models ─────────────────────── User model
-│   ├── From app.schemas ────────────────────── Request/Response schemas
-│   ├── From app.auth ───────────────────────── Auth functions
-│   └── uvicorn ─────────────────────────────── ASGI server
-│
-├── Setup:
-│   ├── ensure_database_exists() ── DB create (agar nahi)
-│   └── Base.metadata.create_all() ── Tables create
-│
-├── CORS Middleware ── Frontend ko allow kare
-│
-├── Routes (Endpoints):
-│   │
-│   ├── GET  / ──────── Home / Health Check
-│   │   └── Return: endpoints list
-│   │
-│   ├── POST /register ─── Register naya user
-│   │   ├── Request: {username, email, password, confirm_password, full_name?}
-│   │   ├── Validation: Pydantic (schema) + manual (uniqueness, password match)
-│   │   ├── Process: hash password -> create User -> db.save -> return UserResponse
-│   │   └── Response: {id, username, email, full_name, is_active, created_at}
-│   │
-│   ├── POST /login ─── Login, get JWT token
-│   │   ├── Request: {username, password}
-│   │   ├── Process: find user -> verify password -> create JWT -> return TokenResponse
-│   │   └── Response: {access_token, token_type, user}
-│   │
-│   └── GET  /profile ─── Protected - get current user's profile
-│       ├── Header: Authorization: Bearer <token>
-│       ├── Middleware: get_current_user() verify karega
-│       └── Response: {id, username, email, full_name, is_active, created_at}
-│
-└── Server Start:
-    └── uvicorn.run("app.main:app", port=3001, reload=True)
+SECRET_KEY=your_jwt_secret_key
+ALGORITHM=HS256
 ```
 
 ---
 
-## Complete Request Flow
+## API Endpoints
 
-Jab koi request aati hai, to pura flow kuch aisa hota hai:
+| Method | Endpoint | Auth Required | Description |
+|--------|----------|:---:|-------------|
+| POST | `/auth/register` | No | Register new user |
+| POST | `/auth/login` | No | Login, returns JWT token |
+| GET | `/api/profile` | Yes | Get profile data |
+| POST | `/api/profile` | Yes | Create/Update profile |
+| GET | `/api/items` | Yes | Paginated items (demo) |
+| POST | `/api/user/{id}` | No | Update user (demo) |
 
-### Register Flow (POST /register)
+### Register
 
-```
-Client                          Server (FastAPI)
-  │                                  │
-  │  POST /register                  │
-  │  { "username": "akhilesh",       │
-  │    "email": "a@b.com",           │
-  │    "password": "Test@1234",      │
-  │    "confirm_password": "Test@1234" }
-  │                                  │
-  │ ──────────────────────────────>  │
-  │                                  │
-  │                           [1] FastAPI receives request
-  │                                  │
-  │                           [2] main.py ka register_user()
-  │                               route match hota hai
-  │                                  │
-  │                           [3] user_data: UserRegister
-  │                               Pydantic validate karta hai:
-  │                               - username: 3-30 chars ✓
-  │                               - email: valid format ✓
-  │                               - password: strong ✓
-  │                                  │
-  │                           [4] db: Session = Depends(get_db)
-  │                               database.py -> naya session
-  │                                  │
-  │                           [5] Password match check (main.py)
-  │                                  │
-  │                           [6] Username unique check
-  │                               db.query(User).filter(...)
-  │                               (models.py ka User use hua)
-  │                                  │
-  │                           [7] Email unique check
-  │                                  │
-  │                           [8] hash_password("Test@1234")
-  │                               auth.py -> bcrypt hash
-  │                                  │
-  │                           [9] User object create
-  │                               models.py ka User class
-  │                                  │
-  │                          [10] db.add(), db.commit()
-  │                               database mein save
-  │                                  │
-  │                          [11] Return UserResponse
-  │                               schemas.py (bina password)
-  │                                  │
-  │  Response 201                    │
-  │  { "id": 1, "username": "akhilesh", ... }
-  │ <──────────────────────────────  │
+```http
+POST /auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "securepass123",
+  "role": "user",
+  "is_active": true
+}
 ```
 
-### Login Flow (POST /login)
+**Response:** `201 Created`
+```json
+{
+  "message": "User registered successfully"
+}
+```
+
+### Login
+
+```http
+POST /auth/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "securepass123"
+}
+```
+
+**Response:** `200 OK`
+```json
+{
+  "message": "Login successful",
+  "access_token": "eyJhbGciOiJIUzI1NiJ9...",
+  "token_type": "bearer"
+}
+```
+
+### Get Profile (Protected)
+
+```http
+GET /api/profile
+Authorization: Bearer <token>
+```
+
+**Response:** `200 OK`
+```json
+{
+  "data": {
+    "id": 1,
+    "user_id": 24,
+    "name": "John Doe",
+    "gender": "male",
+    "phone": "1234567890",
+    "created_at": "2026-06-16T...",
+    "updated_at": "2026-06-16T..."
+  }
+}
+```
+
+### Create/Update Profile (Protected)
+
+```http
+POST /api/profile
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "user_id": 24,
+  "name": "John Doe",
+  "gender": "male",
+  "phone": "1234567890"
+}
+```
+
+---
+
+## How Auth Works
 
 ```
 Client                          Server
-  │                                  │
-  │  POST /login                     │
-  │  { "username": "akhilesh",       │
-  │    "password": "Test@1234" }     │
-  │                                  │
-  │ ──────────────────────────────>  │
-  │                                  │
-  │                           [1] main.py -> login_user()
-  │                                  │
-  │                           [2] UserLogin validate (schemas.py)
-  │                                  │
-  │                           [3] db.query(User).filter(...)
-  │                               User dhunda (models.py)
-  │                                  │
-  │                           [4] verify_password() (auth.py)
-  │                               bcrypt compare
-  │                                  │
-  │                           [5] Check user.is_active
-  │                                  │
-  │                           [6] create_access_token() (auth.py)
-  │                               JWT token bana:
-  │                               encode({"sub":"akhilesh","exp":...})
-  │                                  │
-  │                           [7] Return TokenResponse (schemas.py)
-  │                               { access_token, token_type, user }
-  │                                  │
-  │  Response 200                    │
-  │  { "access_token": "eyJ...",     │
-  │    "token_type": "bearer",       │
-  │    "user": { "id": 1, ... } }    │
-  │ <──────────────────────────────  │
-  │                                  │
-  │ [Client token save karta hai]    │
-```
-
-### Profile Flow (GET /profile) - Protected Route
-
-```
-Client                          Server
-  │                                  │
-  │  GET /profile                    │
-  │  Authorization: Bearer eyJ...    │
-  │                                  │
-  │ ──────────────────────────────>  │
-  │                                  │
-  │                           [1] main.py -> get_profile()
-  │                               Dekhta hai: Depends(get_current_user)
-  │                                  │
-  │                           [2] get_current_user() (auth.py)
-  │                               ─── AUTH MIDDLEWARE ───
-  │                                  │
-  │                           [3] HTTPBearer() (fastapi.security)
-  │                               Header se token nikaala:
-  │                               "eyJhbGciOiJIUzI1NiJ9..."
-  │                                  │
-  │                           [4] verify_token(token) (auth.py)
-  │                               jwt.decode() kiya:
-  │                               - Signature verify ✓
-  │                               - Expiry check ✓
-  │                               - Username: "akhilesh"
-  │                                  │
-  │                           [5] db.query(User).filter(...)
-  │                               Database se user dhunda
-  │                                  │
-  │                           [6] User mil gaya -> return
-  │                                  │
-  │                           ─── END AUTH MIDDLEWARE ───
-  │                                  │
-  │                           [7] Ab route function chalega
-  │                               current_user = User object
-  │                               return current_user
-  │                                  │
-  │                           [8] UserResponse mein convert (schemas.py)
-  │                                  │
-  │  Response 200                    │
-  │  { "id": 1, "username": "akhilesh", ... }
-  │ <──────────────────────────────  │
+  │                                │
+  │  POST /auth/login              │
+  │  { email, password }           │
+  │ ──────────────────────────>    │
+  │                                │
+  │                       [1] Verify email + password
+  │                       [2] Create JWT token
+  │                       [3] Return { access_token }
+  │                                │
+  │  <──────────────────────────   │
+  │  { access_token: "eyJ..." }    │
+  │                                │
+  │  GET /api/profile              │
+  │  Authorization: Bearer eyJ...  │
+  │ ──────────────────────────>    │
+  │                                │
+  │                       [4] auth_deps.py → verify_token()
+  │                       [5] JWT decode → {"user_id", "email"}
+  │                       [6] Attach to req.state.user
+  │                       [7] Return profile data
+  │                                │
+  │  <──────────────────────────   │
+  │  { data: { id, name, ... } }   │
 ```
 
 ---
 
-## How Files Connect With Each Other
+## Database Tables
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        main.py (Entry Point)                        │
-│                                                                     │
-│  from app.database import ensure_database_exists, engine, Base,     │
-│                               get_db                                │
-│  from app.models import User                                        │
-│  from app.schemas import UserRegister, UserLogin, UserResponse,     │
-│                           TokenResponse                            │
-│  from app.auth import hash_password, verify_password,               │
-│                         create_access_token, get_current_user       │
-│                                                                     │
-│  Saare modules ko import karta hai                                  │
-│  Routes define karta hai                                            │
-└──────────┬──────────────┬─────────────────┬────────────────┬────────┘
-           │              │                 │                │
-           ▼              ▼                 ▼                ▼
-┌──────────────────┐ ┌──────────┐ ┌──────────────┐ ┌──────────────┐
-│   database.py    │ │models.py │ │ schemas.py   │ │   auth.py    │
-│                  │ │          │ │              │ │              │
-│ Engine/Session   │ │ User     │ │ Request/     │ │ Password     │
-│ Base (parent)    │ │ class    │ │ Response     │ │ Hash/JWT     │
-│ get_db()         │ │ (table)  │ │ Validation   │ │ Middleware   │
-│                  │ │          │ │              │ │              │
-│ ◄────engine────► │ │ ◄─Base──► │ │              │ │ ◄──get_db──► │
-│ ◄───get_db()───► │ │          │ │              │ │ ◄──User────► │
-└──────────────────┘ └──────────┘ └──────────────┘ └──────────────┘
-        │                                                    │
-        ▼                                                    ▼
-┌──────────────────┐                                ┌──────────────┐
-│   PostgreSQL     │                                │   JWT Token  │
-│   Database       │                                │   "eyJhb..." │
-│                  │                                │              │
-│ python_auth_db   │                                │ SECRET_KEY   │
-│   └─ users table │                                │ se signed    │
-└──────────────────┘                                └──────────────┘
-```
+### users
 
-### Dependency Chain
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL | Primary Key |
+| email | VARCHAR(255) | UNIQUE, NOT NULL |
+| password_hash | TEXT | bcrypt hash |
+| role | VARCHAR(10) | 'user' or 'admin' |
+| is_active | BOOLEAN | Default TRUE |
+| created_at | TIMESTAMP | Auto |
 
-```
-database.py     ← SQLAlchemy, psycopg2 (external packages)
-     │
-     ▼
-models.py       ← database.py (imports Base)
-     │
-     ▼
-schemas.py      ← pydantic, re, datetime (external + built-in)
-     │
-     ▼
-auth.py         ← database.py (get_db), models.py (User)
-                   fastapi, jose, passlib (external)
-     │
-     ▼
-main.py         ← database.py, models.py, schemas.py, auth.py
-                   fastapi, uvicorn (external)
-```
+### user_profiles
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL | Primary Key |
+| user_id | INT | UNIQUE, FK → users(id) |
+| name | VARCHAR(100) | NOT NULL |
+| gender | VARCHAR(10) | 'male', 'female', 'other' |
+| phone | VARCHAR(20) | NOT NULL |
+| created_at | TIMESTAMP | Auto |
+| updated_at | TIMESTAMP | Auto |
 
 ---
 
 ## How to Run
 
-### 1. Virtual Environment (First time only)
+### 1. Setup
 
 ```bash
 cd auth-project
 python -m venv venv
 venv\Scripts\activate     # Windows
-# source venv/bin/activate  # Linux/Mac
-```
-
-### 2. Install Dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
-### 3. Start Server
+**Note:** Make sure PostgreSQL is running on port 5432.
+
+### 2. Start Server
 
 ```bash
-python -m app.main
+uvicorn app.main:app --reload
 ```
 
-Server start hote hi:
-- **API:** http://localhost:3001/
-- **Swagger UI:** http://localhost:3001/docs (Yahan se direct test kar sakte ho!)
-- **ReDoc:** http://localhost:3001/redoc
+Server starts at: `http://localhost:8000`
+
+### 3. Test with Swagger UI
+
+Open `http://localhost:8000/docs` — interactive API documentation.
 
 ### 4. Test with curl
 
 ```bash
 # Register
-curl -X POST http://localhost:3001/register ^
-  -H "Content-Type: application/json" ^
-  -d "{\"username\":\"akhilesh\",\"email\":\"akhilesh@example.com\",\"password\":\"Test@1234\",\"confirm_password\":\"Test@1234\",\"full_name\":\"Akhilesh Soni\"}"
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"test@example.com\",\"password\":\"test123\"}"
 
-# Login (response se token copy karo)
-curl -X POST http://localhost:3001/login ^
-  -H "Content-Type: application/json" ^
-  -d "{\"username\":\"akhilesh\",\"password\":\"Test@1234\"}"
+# Login (copy token from response)
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"test@example.com\",\"password\":\"test123\"}"
 
-# Profile (token laga ke)
-curl -X GET http://localhost:3001/profile ^
+# Profile (with token)
+curl -X GET http://localhost:8000/api/profile \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
 ```
 
 ---
 
-## Key Concepts Summary
+## Key Concepts
 
-| Concept | File | Explanation |
-|---------|------|-------------|
-| **ORM** | `models.py` | Database table ko Python class ki tarah use karo |
-| **Pydantic** | `schemas.py` | Data validation aur serialization |
-| **Dependency Injection** | `auth.py`, `main.py` | FastAPI ka `Depends()` - functions ko pehle call karo |
-| **JWT** | `auth.py` | JSON Web Token - user verify karne ka secure tarika |
-| **Auth Middleware** | `auth.py` | `get_current_user()` - protected routes ka guard |
-| **bcrypt** | `auth.py` | Password hashing algorithm (slow = secure) |
-| **CORS** | `main.py` | Cross-Origin Resource Sharing - frontend ko allow karo |
+| Concept | Location | Description |
+|---------|----------|-------------|
+| **Pydantic** | `models/*.py` | Request/response data validation |
+| **JWT** | `utils/jwt.py` | Token create & verify (HS256) |
+| **bcrypt** | `utils/hash.py` | Password hashing |
+| **Auth Middleware** | `middleware/auth_deps.py` | Bearer token → payload → `req.state.user` |
+| **Raw SQL** | `db/db_query.py` | psycopg2 direct queries (supports dict cursor) |
+| **Auto DB** | `db/database.py` | Auto-create database & tables on startup |
