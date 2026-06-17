@@ -1,15 +1,15 @@
 import psycopg2
 import os
 from dotenv import load_dotenv
-
+from psycopg2.extras import RealDictCursor
 from app.db.database import get_connection
 
 load_dotenv()
 
 
-def query(sql, params=None, fetchone=False, fetchall=False):
+def query(sql, params=None, fetchone=False, fetchall=False, as_dict=False):
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor) if as_dict else conn.cursor()
 
     try:
         cursor.execute(sql, params or ())

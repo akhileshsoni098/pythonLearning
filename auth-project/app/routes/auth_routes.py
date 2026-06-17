@@ -35,8 +35,8 @@ def register(data: RegisterModel):
         raise
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        # import traceback
+        # traceback.print_exc()
         print("REGISTER ERROR:", e)
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -45,13 +45,15 @@ def register(data: RegisterModel):
 def login(data: LoginModel):
     try:
         user = query(
-            "SELECT * FROM users WHERE email = %s", (data.email,), fetchone=True
+            "SELECT id, email, password_hash FROM users WHERE email = %s",
+            (data.email,),
+            fetchone=True,
         )
 
         if not user:
             raise HTTPException(status_code=400, detail="User not found")
 
-        user_id, email, password_hash, role, is_active, created_at = user
+        user_id, email, password_hash = user
 
         if not verify_password(data.password, password_hash):
             raise HTTPException(status_code=400, detail="Invalid password")
@@ -67,7 +69,7 @@ def login(data: LoginModel):
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        # import traceback
+        # traceback.print_exc()
         print("LOGIN ERROR:", e)
         raise HTTPException(status_code=500, detail="Internal server error")
